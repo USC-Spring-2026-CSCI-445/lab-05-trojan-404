@@ -34,7 +34,7 @@ class PIDController:
 
         self.err_int = 0.0
         self.err_int_min = -1.0
-        self.err_int_max = 1.0
+        self.err_int_max = abs(u_max) / max(kI, 1e-6)
         ######### Your code ends here #########
 
     def control(self, err, t):
@@ -105,16 +105,18 @@ class PDController:
         dt = t - self.t_prev
         # Compute PD control action here
         ######### Your code starts here #########
-        if self.t_prev is None or dt is None:
+        if self.t_prev is None:
             self.t_prev = t
             self.err_prev = err
             return 0.0
 
+        dt = t - self.t_prev
         if dt <= 1e-6:
             return 0.0
 
         derr = (err - self.err_prev) / dt
 
+        # Static "kick" (optional)
         s = 0.0
         if err > 0:
             s = 1.0
@@ -123,6 +125,7 @@ class PDController:
 
         u = self.kP * err + self.kD * derr + self.kS * s
 
+        # clamp output
         if u > self.u_max:
             u = self.u_max
         elif u < self.u_min:
@@ -180,7 +183,18 @@ class GoalPositionController:
 
         # Calculate error in position and orientation
         ######### Your code starts here #########
+        dx = self.goal_position["x"] - self.current_position["x"]
+        dy = self.goal_position["y"] - self.current_position["y"]
 
+        distance_error = math.sqrt(dx * dx + dy * dy)
+
+        desired_heading = math.atan2(dy, dx)
+
+        # minimum-angle difference using atan2(sinΔ, cosΔ)
+        angle_error = math.atan2(
+            math.sin(desired_heading - self.current_position["theta"]),
+            math.cos(desired_heading - self.current_position["theta"])
+        )
         ######### Your code ends here #########
 
         # Ensure angle error is within -pi to pi range
@@ -203,7 +217,28 @@ class GoalPositionController:
 
             # Calculate control commands using linear and angular PID controllers and stop if close enough to goal
             ######### Your code starts here #########
+            t = rospy.get_time()
 
+            # Stop if close enough to goal (improved solution 1)
+            if distance_error < self.dist_tol:
+                ctrl_msg.linear.x = 0.0
+                ctrl_msg.angular.z = 0.0
+                self.vel_pub.publish(ctrl_msg)
+                rate.sleep()
+                continue
+
+            # Baseline: constant forward velocity, control only heading
+            if self.use_velocity_pid:
+                v_cmd = self.lin_pid.control(distance_error, t)
+            else:
+                v_cmd = self.v0
+
+            w_cmd = self.ang_pid.control(angle_error, t)
+
+            ctrl_msg.linear.x = v_cmd
+            ctrl_msg.angular.z = w_cmd
+
+            self.vel_pub.publish(ctrl_msg)
 
             ######### Your code ends here #########
 
@@ -226,7 +261,13 @@ class GoalAngleController:
 
         # define PID controller angular velocity
         ######### Your code starts here #########
+        self.angle_tol = 0.03  # rad
 
+        # PD go-to-angle controller
+        self.ang_ctrl = PDController(
+            kP=2.8, kD=0.18, kS=0.0,
+            u_min=-1.5, u_max=1.5
+        )
         ######### Your code ends here #########
 
     def odom_callback(self, msg):
@@ -243,7 +284,10 @@ class GoalAngleController:
 
         # Calculate error in orientation
         ######### Your code starts here #########
-
+        angle_error = math.atan2(
+            math.sin(self.goal_angle - self.current_position["theta"]),
+            math.cos(self.goal_angle - self.current_position["theta"])
+        )
         ######### Your code ends here #########
 
         # Ensure angle error is within -pi to pi range
@@ -264,7 +308,21 @@ class GoalAngleController:
 
             # Calculate control commands using angular PID controller and stop if close enough to goal
             ######### Your code starts here #########
+            t = rospy.get_time()
 
+            if abs(angle_error) < self.angle_tol:
+                ctrl_msg.linear.x = 0.0
+                ctrl_msg.angular.z = 0.0
+                self.vel_pub.publish(ctrl_msg)
+                rate.sleep()
+                continue
+
+            w_cmd = self.ang_ctrl.control(angle_error, t)
+
+            ctrl_msg.linear.x = 0.0
+            ctrl_msg.angular.z = w_cmd
+
+            self.vel_pub.publish(ctrl_msg)
             ######### Your code ends here #########
 
             rate.sleep()
