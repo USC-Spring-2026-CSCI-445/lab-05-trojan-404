@@ -102,9 +102,10 @@ class PDController:
         ######### Your code ends here #########
 
     def control(self, err, t):
-        dt = t - self.t_prev
+        #dt = t - self.t_prev
         # Compute PD control action here
         ######### Your code starts here #########
+        # first call: initialize memory, output 0
         if self.t_prev is None:
             self.t_prev = t
             self.err_prev = err
@@ -116,7 +117,7 @@ class PDController:
 
         derr = (err - self.err_prev) / dt
 
-        # Static "kick" (optional)
+        # optional static term (can set kS=0)
         s = 0.0
         if err > 0:
             s = 1.0
@@ -125,12 +126,13 @@ class PDController:
 
         u = self.kP * err + self.kD * derr + self.kS * s
 
-        # clamp output
+        # clamp
         if u > self.u_max:
             u = self.u_max
         elif u < self.u_min:
             u = self.u_min
 
+        # update memory
         self.t_prev = t
         self.err_prev = err
         return u
@@ -162,9 +164,9 @@ class GoalPositionController:
             u_min=-1.5, u_max=1.5
         )
 
-        self.use_velocity_pid = False
+        self.use_velocity_pid = True
         self.lin_pid = PIDController(
-            kP=0.8, kI=0.0, kD=0.0, kS=0.0,
+            kP=0.6, kI=0.0, kD=0.0, kS=0.0,
             u_min=0.0, u_max=0.22
         )
         ######### Your code ends here #########
@@ -227,6 +229,15 @@ class GoalPositionController:
                 rate.sleep()
                 continue
 
+            # If heading error is large, rotate in place first (reduces circling / improves straightness)
+            if abs(angle_error) > 0.35:  # ~20 degrees
+                ctrl_msg.linear.x = 0.0
+                ctrl_msg.angular.z = self.ang_pid.control(angle_error, t)
+                self.vel_pub.publish(ctrl_msg)
+                rate.sleep()
+                continue
+
+
             # Baseline: constant forward velocity, control only heading
             if self.use_velocity_pid:
                 v_cmd = self.lin_pid.control(distance_error, t)
@@ -235,7 +246,8 @@ class GoalPositionController:
 
             w_cmd = self.ang_pid.control(angle_error, t)
 
-            ctrl_msg.linear.x = v_cmd
+            
+            ctrl_msg.linear.x = min(v_cmd, 0.22) * min(1.0, distance_error / 0.3)
             ctrl_msg.angular.z = w_cmd
 
             self.vel_pub.publish(ctrl_msg)
