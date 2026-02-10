@@ -21,13 +21,61 @@ class PIDController:
         assert u_min < u_max, "u_min should be less than u_max"
         # Initialize PID variables here
         ######### Your code starts here #########
+        self.kP = kP
+        self.kI = kI
+        self.kD = kD
+        self.kS = kS
 
+        self.u_min = u_min
+        self.u_max = u_max
+
+        self.t_prev = None
+        self.err_prev = 0.0
+
+        self.err_int = 0.0
+        self.err_int_min = -1.0
+        self.err_int_max = 1.0
         ######### Your code ends here #########
 
     def control(self, err, t):
         # computer PID control action here
         ######### Your code starts here #########
+        if self.t_prev is None:
+            self.t_prev = t
+            self.err_prev = err
+            return 0.0
 
+        dt = t - self.t_prev
+        if dt <= 1e-6:
+            return 0.0
+
+        # Integral (with independent clamp to prevent windup)
+        self.err_int += err * dt
+        if self.err_int > self.err_int_max:
+            self.err_int = self.err_int_max
+        elif self.err_int < self.err_int_min:
+            self.err_int = self.err_int_min
+
+        # Derivative
+        derr = (err - self.err_prev) / dt
+
+        s = 0.0
+        if err > 0:
+            s = 1.0
+        elif err < 0:
+            s = -1.0
+
+        u = self.kP * err + self.kI * self.err_int + self.kD * derr + self.kS * s
+
+        # Output clamp
+        if u > self.u_max:
+            u = self.u_max
+        elif u < self.u_min:
+            u = self.u_min
+
+        self.t_prev = t
+        self.err_prev = err
+        return u
         ######### Your code ends here #########
 
 
@@ -42,14 +90,47 @@ class PDController:
         assert u_min < u_max, "u_min should be less than u_max"
         # Initialize PD variables here
         ######### Your code starts here #########
+        self.kP = kP
+        self.kD = kD
+        self.kS = kS
 
+        self.u_min = u_min
+        self.u_max = u_max
+
+        self.t_prev = None
+        self.err_prev = 0.0
         ######### Your code ends here #########
 
     def control(self, err, t):
         dt = t - self.t_prev
         # Compute PD control action here
         ######### Your code starts here #########
+        if self.t_prev is None or dt is None:
+            self.t_prev = t
+            self.err_prev = err
+            return 0.0
 
+        if dt <= 1e-6:
+            return 0.0
+
+        derr = (err - self.err_prev) / dt
+
+        s = 0.0
+        if err > 0:
+            s = 1.0
+        elif err < 0:
+            s = -1.0
+
+        u = self.kP * err + self.kD * derr + self.kS * s
+
+        if u > self.u_max:
+            u = self.u_max
+        elif u < self.u_min:
+            u = self.u_min
+
+        self.t_prev = t
+        self.err_prev = err
+        return u
         ######### Your code ends here #########
 
 
@@ -69,7 +150,20 @@ class GoalPositionController:
 
         # define PID controllers for linear and angular velocities
         ######### Your code starts here #########
+        self.v0 = 0.12  # m/s (tune)
+        self.dist_tol = 0.05 
+        self.angle_tol = 0.05 
 
+        self.ang_pid = PIDController(
+            kP=2.5, kI=0.0, kD=0.15, kS=0.0,
+            u_min=-1.5, u_max=1.5
+        )
+
+        self.use_velocity_pid = False
+        self.lin_pid = PIDController(
+            kP=0.8, kI=0.0, kD=0.0, kS=0.0,
+            u_min=0.0, u_max=0.22
+        )
         ######### Your code ends here #########
 
     def odom_callback(self, msg):
